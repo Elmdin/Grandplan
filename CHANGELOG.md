@@ -109,6 +109,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
   actually works. Machines with headroom can still pass `--kb-model qwen2.5:14b`.
 
 ### Fixed
+- **Phone captures no longer kill the pipeline at the first approve (#41).** The GUI creates the
+  repository — and the similarity index's sqlite connection (#35) — on the main thread, while the
+  capture worker thread does every assess/commit. Python's sqlite3 refuses cross-thread use of a
+  connection by default, so the first indexed write (approving a phone capture) crashed with
+  `sqlite3.ProgrammingError`, and the half-initialized index then made **every** later capture in
+  the session fail during analysis. The index connection now allows cross-thread use with all
+  access serialized under one re-entrant lock; a regression test drives the index from a thread it
+  wasn't created on. (Notes were never lost — the JSONL event log stayed intact and the index
+  resyncs on reopen — but capture was down for the session.)
 - **Captured notes now build the people/org graph.** `materialize_entities` — which turns people and
   organizations named in a capture into `entity` notes joined by `involves` edges — was wired into
   `organize` and `regenerate` but **never into the capture coordinator**. Every note captured the

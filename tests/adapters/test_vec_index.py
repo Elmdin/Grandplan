@@ -9,6 +9,7 @@ wrong answers.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -106,6 +107,32 @@ def test_events_and_edges_delegate_to_inner(tmp_path: Path) -> None:
     assert indexed.current_note("n0") is not None
     assert len(indexed.notes()) == len(_TEXTS)
     assert indexed.history_of("n0")  # event log reachable through the wrapper
+
+
+def test_usable_from_threads_other_than_the_creating_one(tmp_path: Path) -> None:
+    # The GUI builds the repository on the main thread, but the coordinator's capture worker (a
+    # different thread) performs every assess/commit. sqlite3 connections refuse cross-thread use
+    # by default, so the first indexed write from the worker killed the whole capture pipeline
+    # (phone capture → approve → sqlite3.ProgrammingError). Created-here, used-there must work.
+    indexed = VecIndexedRepository(InMemoryNoteRepository(), tmp_path / "vec.db")
+    embedder = HashingEmbedder()
+    query = embedder.embed("postgres server backend")
+    failures: list[BaseException] = []
+
+    def capture_worker() -> None:
+        try:
+            for i, text in enumerate(_TEXTS):
+                indexed.add_note(_note(i, text), embedder.embed(text))
+            indexed.most_similar(query, limit=2)
+        except BaseException as exc:  # noqa: BLE001 - any exception here IS the regression
+            failures.append(exc)
+
+    worker = threading.Thread(target=capture_worker)
+    worker.start()
+    worker.join()
+    assert failures == []
+    # The creating thread still sees and can search everything the worker wrote.
+    assert [n.id for n, _ in indexed.most_similar(query, limit=2)] == ["n0", "n1"]
 
 
 def test_maybe_indexed_returns_inner_when_sqlite_vec_missing(
