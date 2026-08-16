@@ -125,6 +125,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
   the "no local model responded" degradation (which previously made the whole turn vanish, since
   the session's model-facing memory deliberately drops failed turns). The degradation message now
   says how to check what's wrong (Ollama running? `ollama list`).
+- **The `--serve` token no longer leaks into the log or the phone's browser history (#43).** The
+  intake audit line logged the full request path — and the phone app's first load is
+  `GET /?token=<secret>`, so the shared secret landed in plaintext in the console and the
+  persistent rotating log, contradicting the line's own "never the token" contract. Query strings
+  are now redacted from the audit trail (`/?token=abc` logs as `/?[redacted]`). The phone page also
+  stops parking the secret in the address bar: it stashes the token in `sessionStorage` and
+  rewrites the URL without the query, so browser history/autocomplete never keep it (reload still
+  authenticates from the stored copy, and the share-link UX is unchanged). The Bearer-header API
+  auth model itself was already sound and is untouched.
 
 ### Changed
 - **Background enrichment is now opt-in (`gui --enrich`)** — the post-save LLM pass (#38: typed

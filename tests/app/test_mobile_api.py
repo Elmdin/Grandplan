@@ -95,6 +95,16 @@ def test_web_app_is_self_contained_and_wired_to_the_api() -> None:
     assert "Content-Type" in html and "application/json" in html
 
 
+def test_web_app_scrubs_token_from_url_and_history() -> None:
+    # The share link carries ?token=<secret> once; the page must not LEAVE it there — it stashes the
+    # token in sessionStorage and rewrites the URL, so the phone browser's address bar, history, and
+    # autocomplete never keep the secret (#43). Reload still works via the stored copy.
+    html = MOBILE_APP_HTML
+    assert "sessionStorage" in html
+    assert "history.replaceState" in html
+    assert "location.pathname" in html  # the rewritten URL drops the query entirely
+
+
 # -- request handlers (auth + routing; the socket shell in http_intake just calls these) ----------
 
 from grandplan.app.mobile_api import handle_mobile_decision, handle_mobile_get  # noqa: E402
