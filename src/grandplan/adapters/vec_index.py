@@ -15,12 +15,18 @@ Design points:
   an embedder switch — falls back to the inner brute force: slower, never wrong.
 - **Optional dependency** (`pip install grandplan[index]`): `maybe_indexed` wraps when sqlite-vec
   is importable and working, else returns the inner repository unchanged.
+- **Thread-shared.** The GUI builds the repository on the main thread, then the coordinator's
+  capture worker (and chat threads) do the actual reads/writes. sqlite3 connections refuse
+  cross-thread use by default, so the connection is opened with `check_same_thread=False` and
+  every access — including the `_dim`/`_degraded` state it guards — is serialized under one
+  re-entrant lock.
 """
 
 from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 from pathlib import Path
 
 from grandplan.core.models import Edge, Note, NoteEdit, NoteEvent, NoteStatus
@@ -54,8 +60,11 @@ class VecIndexedRepository:
 
         self._inner = inner
         self._serialize = sqlite_vec.serialize_float32
+        # Created on the GUI's main thread, used from the capture worker: allow cross-thread use
+        # and serialize every access ourselves (re-entrant: _sync → _index nests).
+        self._lock = threading.RLock()
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(str(db_path))
+        self._db = sqlite3.connect(str(db_path), check_same_thread=False)
         self._db.enable_load_extension(True)
         sqlite_vec.load(self._db)
         self._db.enable_load_extension(False)
@@ -75,13 +84,14 @@ class VecIndexedRepository:
     def most_similar(
         self, embedding: tuple[float, ...], *, limit: int = 5, threshold: float = 0.0
     ) -> tuple[tuple[Note, float], ...]:
-        if self._degraded or self._dim is None or len(embedding) != self._dim:
-            return self._inner.most_similar(embedding, limit=limit, threshold=threshold)
-        rows = self._db.execute(
-            "SELECT m.note_id, v.distance FROM vec_notes v JOIN map m ON m.vec_rowid = v.rowid "
-            "WHERE v.embedding MATCH ? AND k = ?",
-            (self._serialize(list(embedding)), limit),
-        ).fetchall()
+        with self._lock:
+            if self._degraded or self._dim is None or len(embedding) != self._dim:
+                return self._inner.most_similar(embedding, limit=limit, threshold=threshold)
+            rows = self._db.execute(
+                "SELECT m.note_id, v.distance FROM vec_notes v JOIN map m ON m.vec_rowid = v.rowid "
+                "WHERE v.embedding MATCH ? AND k = ?",
+                (self._serialize(list(embedding)), limit),
+            ).fetchall()
         scored: list[tuple[Note, float]] = []
         for note_id, distance in rows:
             note = self._inner.get_note(str(note_id))
@@ -103,45 +113,49 @@ class VecIndexedRepository:
 
     def delete_note(self, note_id: str, *, at: str | None = None) -> None:
         self._inner.delete_note(note_id, at=at)
-        row = self._db.execute("SELECT vec_rowid FROM map WHERE note_id = ?", (note_id,)).fetchone()
-        if row is not None:
-            self._db.execute("DELETE FROM vec_notes WHERE rowid = ?", (row[0],))
-            self._db.execute("DELETE FROM map WHERE note_id = ?", (note_id,))
-            self._db.commit()
+        with self._lock:
+            row = self._db.execute(
+                "SELECT vec_rowid FROM map WHERE note_id = ?", (note_id,)
+            ).fetchone()
+            if row is not None:
+                self._db.execute("DELETE FROM vec_notes WHERE rowid = ?", (row[0],))
+                self._db.execute("DELETE FROM map WHERE note_id = ?", (note_id,))
+                self._db.commit()
 
     # -- index maintenance -------------------------------------------------------------------------
 
     def _index(self, note_id: str, embedding: tuple[float, ...]) -> None:
-        if self._degraded:
-            return
-        if self._dim is None:
-            self._dim = len(embedding)
+        with self._lock:
+            if self._degraded:
+                return
+            if self._dim is None:
+                self._dim = len(embedding)
+                self._db.execute(
+                    f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_notes USING "
+                    f"vec0(embedding float[{self._dim}] distance_metric=cosine)"
+                )
+                self._db.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('dim', ?)", (str(self._dim),)
+                )
+            if len(embedding) != self._dim:
+                logger.warning(
+                    "embedding dim %d != index dim %d (embedder switched?); "
+                    "similarity falls back to brute force",
+                    len(embedding),
+                    self._dim,
+                )
+                self._degraded = True
+                return
+            row = self._db.execute("SELECT MAX(vec_rowid) FROM map").fetchone()
+            rowid = int(row[0] or 0) + 1
             self._db.execute(
-                f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_notes USING "
-                f"vec0(embedding float[{self._dim}] distance_metric=cosine)"
+                "INSERT INTO vec_notes (rowid, embedding) VALUES (?, ?)",
+                (rowid, self._serialize(list(embedding))),
             )
             self._db.execute(
-                "INSERT OR REPLACE INTO meta (key, value) VALUES ('dim', ?)", (str(self._dim),)
+                "INSERT OR REPLACE INTO map (note_id, vec_rowid) VALUES (?, ?)", (note_id, rowid)
             )
-        if len(embedding) != self._dim:
-            logger.warning(
-                "embedding dim %d != index dim %d (embedder switched?); "
-                "similarity falls back to brute force",
-                len(embedding),
-                self._dim,
-            )
-            self._degraded = True
-            return
-        row = self._db.execute("SELECT MAX(vec_rowid) FROM map").fetchone()
-        rowid = int(row[0] or 0) + 1
-        self._db.execute(
-            "INSERT INTO vec_notes (rowid, embedding) VALUES (?, ?)",
-            (rowid, self._serialize(list(embedding))),
-        )
-        self._db.execute(
-            "INSERT OR REPLACE INTO map (note_id, vec_rowid) VALUES (?, ?)", (note_id, rowid)
-        )
-        self._db.commit()
+            self._db.commit()
 
     def _sync(self) -> None:
         """Reconcile the index with the inner store: add unindexed live notes, drop stale rows.
@@ -149,25 +163,26 @@ class VecIndexedRepository:
         Runs at open; makes the .db file freely deletable (a lost index is a rebuild, not a loss)
         and heals any crash between an inner write and an index write.
         """
-        indexed = {str(r[0]) for r in self._db.execute("SELECT note_id FROM map").fetchall()}
-        live: set[str] = set()
-        for note in self._inner.notes():
-            if self._inner.get_note(note.id) is None:
-                continue  # tombstoned
-            live.add(note.id)
-            if note.id in indexed:
-                continue
-            embedding = self._inner.embedding_of(note.id)
-            if embedding is not None:
-                self._index(note.id, embedding)
-        for stale in indexed - live:
-            row = self._db.execute(
-                "SELECT vec_rowid FROM map WHERE note_id = ?", (stale,)
-            ).fetchone()
-            if row is not None:
-                self._db.execute("DELETE FROM vec_notes WHERE rowid = ?", (row[0],))
-                self._db.execute("DELETE FROM map WHERE note_id = ?", (stale,))
-        self._db.commit()
+        with self._lock:
+            indexed = {str(r[0]) for r in self._db.execute("SELECT note_id FROM map").fetchall()}
+            live: set[str] = set()
+            for note in self._inner.notes():
+                if self._inner.get_note(note.id) is None:
+                    continue  # tombstoned
+                live.add(note.id)
+                if note.id in indexed:
+                    continue
+                embedding = self._inner.embedding_of(note.id)
+                if embedding is not None:
+                    self._index(note.id, embedding)
+            for stale in indexed - live:
+                row = self._db.execute(
+                    "SELECT vec_rowid FROM map WHERE note_id = ?", (stale,)
+                ).fetchone()
+                if row is not None:
+                    self._db.execute("DELETE FROM vec_notes WHERE rowid = ?", (row[0],))
+                    self._db.execute("DELETE FROM map WHERE note_id = ?", (stale,))
+            self._db.commit()
 
     # -- pure delegation (storage/events stay the inner repo's job) --------------------------------
 
