@@ -9,7 +9,10 @@ page) so it is unit-tested offline; the socket routing that calls it lives in `a
 
 Auth model: the page at `GET /` is a public shell (no data). It reads the token from its own URL
 (`?token=…`) and sends it as `Authorization: Bearer …` on every `/api/*` call, which ARE gated. So a
-phone opens `http://<host>:8765/?token=<secret>` once; the data endpoints stay protected.
+phone opens `http://<host>:8765/?token=<secret>` once; the data endpoints stay protected. The page
+then stashes the token in sessionStorage and rewrites the URL without the query (#43), so the
+secret never lingers in the browser's address bar or history — and the server's audit log redacts
+query strings for the same reason (`http_intake.audit_path`).
 """
 
 from __future__ import annotations
@@ -228,7 +231,19 @@ MOBILE_APP_HTML = """<!doctype html>
 <h2>Queue</h2><div id="queue"></div>
 <div id="toasts"></div>
 <script>
-const TOKEN = new URLSearchParams(location.search).get("token") || "";
+const TOKEN = (() => {
+  // The share link carries ?token=<secret> ONCE. Stash it and scrub the URL so the phone browser's
+  // address bar / history / autocomplete never keep the secret; reload works via the stored copy.
+  const fromUrl = new URLSearchParams(location.search).get("token");
+  if (fromUrl) {
+    try {
+      sessionStorage.setItem("gp_token", fromUrl);
+      history.replaceState(null, "", location.pathname);
+    } catch (e) { /* storage unavailable — leave the URL intact so reload still authenticates */ }
+    return fromUrl;
+  }
+  try { return sessionStorage.getItem("gp_token") || ""; } catch (e) { return ""; }
+})();
 const H = TOKEN ? { Authorization: "Bearer " + TOKEN } : {};
 const el = id => document.getElementById(id);
 const esc = s => (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));

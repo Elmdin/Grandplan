@@ -6,6 +6,7 @@ import pytest
 
 from grandplan.adapters.http_intake import (
     MAX_BODY_BYTES,
+    audit_path,
     bearer_token,
     check_auth,
     handle_intake,
@@ -89,6 +90,15 @@ def test_bearer_token_extracts_and_rejects() -> None:
     assert bearer_token("Bearer abc123") == "abc123"
     assert bearer_token("Basic abc123") is None
     assert bearer_token("") is None
+
+
+def test_audit_path_redacts_query_string() -> None:
+    # The audit line promises "never the token" — but the phone app's first GET is /?token=<secret>,
+    # so anything after the ? must never reach the log (#43).
+    assert audit_path("/?token=secret") == "/?[redacted]"
+    assert audit_path("/capture?token=s&x=1") == "/capture?[redacted]"
+    assert audit_path("/api/pending") == "/api/pending"  # no query → logged as-is
+    assert "secret" not in audit_path("/?token=secret")
 
 
 def test_check_auth_open_when_no_token_configured() -> None:

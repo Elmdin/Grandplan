@@ -88,6 +88,17 @@ def bearer_token(authorization: str) -> str | None:
     return authorization[len(prefix) :] if authorization.startswith(prefix) else None
 
 
+def audit_path(path: str) -> str:
+    """A request path as it is allowed to appear in logs: the query string is dropped (#43).
+
+    The audit line promises "never the token or body", but the phone app's first GET carries the
+    shared secret as `/?token=<secret>` — so the whole query is redacted, not just a known param:
+    `/?token=abc` logs as `/?[redacted]`, a query-free path logs unchanged.
+    """
+    base, sep, _query = path.partition("?")
+    return base + ("?[redacted]" if sep else "")
+
+
 def check_auth(token: str, provided_token: str | None) -> bool:
     """Authorized iff no token is configured, or the provided token matches it (constant-time)."""
     if not token:
@@ -166,7 +177,13 @@ def serve_intake(
         def _reply(self, result: IntakeResult) -> None:
             # One audit line per response (status + client IP, never the token or body) — the default
             # access log stays off (log_message below), so this is the sole, intentional trail.
-            logger.info("intake %s from %s -> %d", self.path, self.client_address[0], result.status)
+            # audit_path drops the query string: the phone app's first GET is /?token=<secret> (#43).
+            logger.info(
+                "intake %s from %s -> %d",
+                audit_path(self.path),
+                self.client_address[0],
+                result.status,
+            )
             if result.text is not None:  # raw body (the phone web app's HTML)
                 encoded = result.text.encode("utf-8")
                 content_type = result.content_type
