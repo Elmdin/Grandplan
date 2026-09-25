@@ -62,7 +62,7 @@ Nothing is fetched and nothing leaves the machine; this is about *local* process
 
 ## Quality gate (borromeo)
 
-This repo is governed by [borromeo](https://github.com/3MagicLabs/borromeo). Nothing is "done" until the
+This repo is governed by [borromeanRings](https://github.com/Elmdin/borromeanRings). Nothing is "done" until the
 gate is green. Run it locally:
 
 ```bash
