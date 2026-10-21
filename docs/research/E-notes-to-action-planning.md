@@ -5,7 +5,7 @@ agendas/GTD, and dynamic query/view systems, especially those driven by Markdown
 **Excluded:** pure note capture, RAG chat apps, memory libraries, generic Obsidian AI plugins.
 
 **Date:** 2026-06-19. **Star counts & licenses verified** via `gh api repos/OWNER/REPO --jq
-'.stargazers_count, .license.spdx_id'` on that date. grandplan is **MIT** (`LICENSE`: 3MagicLabs 2026),
+'.stargazers_count, .license.spdx_id'` on that date. grandplan is **MIT** (`LICENSE`: Elmdin 2026),
 so AGPL/custom-licensed code must NOT be ported — only techniques/patterns may be borrowed.
 
 ## grandplan baseline (what it already has)

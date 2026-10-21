@@ -25,7 +25,7 @@ ollama --version
 > `Set-ExecutionPolicy -Scope Process RemoteSigned`, then retry).
 
 ```cmd
-git clone https://github.com/3MagicLabs/grandplan.git
+git clone https://github.com/Elmdin/grandplan.git
 cd grandplan
 python -m venv .venv
 .venv\Scripts\activate
