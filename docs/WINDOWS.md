@@ -45,7 +45,7 @@ prevents stacked/parallel model loads; this cap bounds the blast radius even if 
 ## 2. Get the code and install
 
 ```cmd
-git clone https://github.com/3MagicLabs/grandplan.git
+git clone https://github.com/Elmdin/grandplan.git
 cd grandplan
 python -m venv .venv
 .venv\Scripts\activate
@@ -67,7 +67,7 @@ bandit -q -r src
 ```
 
 All must pass — this is exactly what CI runs. For the full borromeo gate, optionally clone
-<https://github.com/3MagicLabs/borromeo> and run `borromeo/verify.sh` from Git Bash or WSL.
+<https://github.com/Elmdin/borromeo> and run `borromeo/verify.sh` from Git Bash or WSL.
 
 ## 4. Run it
 
