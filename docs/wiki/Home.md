@@ -5,7 +5,8 @@ hotkey → a **local LLM** organizes it into a clean, atomic note (your original
 → you approve → it's filed as a linked, de-duplicated Markdown note in your **Obsidian vault**, and
 projected into an actionable plan.
 
-> Nothing leaves your machine.
+> By default nothing leaves your machine. Optional phone capture on a LAN `--host` uses plain HTTP
+> (token-gated, not encrypted) on your local network; see the README's security notes.
 
 ## Pages
 - **[[Getting-Started]]** — install, run the offline core, Windows setup.
