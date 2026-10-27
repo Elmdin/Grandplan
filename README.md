@@ -13,7 +13,13 @@
 **Status:** working offline core. The platform-agnostic capture → organize → vault → plan
 pipeline is built and gated (870 passing tests, runnable from the CLI); the local-LLM (Ollama)
 organizer and the Windows global-hotkey capture/GUI are implemented as environment-gated
-adapters. Nothing leaves your machine.
+adapters.
+
+By default nothing leaves your machine: grandplan sends no notes to any cloud service. Exceptions you
+opt into: optional phone capture (`--serve` / `up` on a LAN `--host`) carries captures between your
+phone and PC over **plain HTTP** (token-gated, but grandplan does not encrypt it, so others on the same
+Wi-Fi could read the traffic unless you use Tailscale or another encrypted tunnel); setting up the local models (Ollama, sentence-transformers)
+downloads model files; and any MCP agent you connect can read the vault under its own terms.
 
 ## Why
 
@@ -58,7 +64,8 @@ its user are trusted:
   boundary, and only expose the port to callers you trust.
 - Captured originals are stored **unencrypted** as JSONL under `~/.grandplan/` (or `GRANDPLAN_HOME`).
 
-Nothing is fetched and nothing leaves the machine; this is about *local* process trust, not network exposure.
+On localhost nothing leaves the machine. A LAN `--host` sends captures over plain HTTP (no TLS), so use it
+only on a network you trust, or over Tailscale; this section is about local process trust, not network exposure.
 
 ## Quality gate (borromeo)
 
